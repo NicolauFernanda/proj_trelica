@@ -1,0 +1,188 @@
+% Ler entrada do usuário
+fprintf('Digite a quantidade de nós e de barras separadas por ";" [ex.: 1;2]:\n');
+
+% Ler primeira linha: número de nós; número de elementos?
+primeira_linha = input('', 's');
+dados = strsplit(primeira_linha, ';');
+n = str2double(dados{1});
+m = str2double(dados{2});
+
+% Ler coordenadas dos nós
+nos = zeros(n, 2);
+rotulos_nos = cell(n, 1);
+for i = 1:n
+    fprintf('Digite nome, coordX e coordY do nó %d - separados por ";": \n', i);
+    linha = input('', 's');
+    dados = strsplit(linha, ';');
+    rotulos_nos{i} = strtrim(dados{1});
+    nos(i,1) = str2double(dados{2});
+    nos(i,2) = str2double(dados{3});
+end
+
+% Ler matriz de adjacência
+adj = zeros(n, n);
+for i = 1:n
+    fprintf('Digite a linha %d da matriz (com elementos separados por ";"): \n', i);
+    linha = input('', 's');
+    dados = strsplit(linha, ';');
+    for j = 1:n
+        adj(i,j) = str2double(dados{j});
+    end
+end
+
+% Ler forças aplicadas
+forcas = zeros(n, 2);
+for i = 1:n
+    fprintf('Digite as forças do nó %d (separadas por ";"): \n', i);
+    linha = input('', 's');
+    dados = strsplit(linha, ';');
+    forcas(i,1) = str2double(dados{1});
+    forcas(i,2) = str2double(dados{2});
+end
+
+% Ler vínculos
+vinculos = char(n, 1);
+fprintf(['Os tipos de vínculo para os nós são:\n'...
+    '[N - não vinculado\n'...
+    'P - Pino (reação em x e y - com rotação\n'...
+    'X -  Rolete (reação vertical / desloc. horizontal)\n'...
+    'Y - Apoio lateral (reação horizontal / desloc. vertical]\n'])
+for i = 1:n
+    fprintf('Digite o tipo de vínculo para o nó %d\n', i);
+    linha = input('', 's');
+    vinculos(i) = strtrim(linha);
+end
+
+% -------------------------------------
+% 1) Construir lista de barras
+barras = [];
+for i=1:n
+    for j=i+1:n
+        if adj(i,j) == 1
+            dx = nos(j,1) - nos(i,1);
+            dy = nos(j,2) - nos(i,2);
+            L = sqrt(dx^2 + dy^2);
+            cx = dx/L; cy = dy/L;
+            barras = [barras; i j L cx cy];
+        end
+    end
+end
+nb = size(barras,1); % número de barras
+
+% 2) Montar sistema A*x = b
+A = [];
+b = [];
+
+% índices para reações
+idxRx = zeros(n,1);
+idxRy = zeros(n,1);
+k = nb+1;
+
+for i=1:n
+    switch vinculos(i)
+        case 'P'
+            idxRx(i)=k; k=k+1;
+            idxRy(i)=k; k=k+1;
+        case 'N'
+            % Nó livre - sem reações
+        case 'X'
+            idxRy(i)=k; k=k+1;
+        case 'Y'
+            idxRx(i)=k; k=k+1;
+    end
+end
+
+nu = k-1; % total de incógnitas
+
+A = zeros(2*n, nu);
+b = zeros(2*n,1);
+
+% contribuições das barras
+for bi=1:nb
+    i = barras(bi,1); j = barras(bi,2);
+    cx = barras(bi,4); cy = barras(bi,5);
+    A(2*i-1,bi) = A(2*i-1,bi) + cx;
+    A(2*i,bi)   = A(2*i,bi)   + cy;
+    A(2*j-1,bi) = A(2*j-1,bi) - cx;
+    A(2*j,bi)   = A(2*j,bi)   - cy;
+end
+
+% contribuições das reações
+for i=1:n
+    if idxRx(i) > 0
+        A(2*i-1, idxRx(i)) = 1;
+    end
+    if idxRy(i) > 0
+        A(2*i, idxRy(i)) = 1;
+    end
+end
+
+% vetor de cargas
+for i=1:n
+    b(2*i-1) = -forcas(i,1);
+    b(2*i)   = -forcas(i,2);
+end
+
+% 3) Resolver sistema
+x = A\b;
+
+% 4) Formatando a saída conforme especificado
+fprintf('\n--- Saída ---\n');
+
+% Reações nos apoios
+for i=1:n
+    if vinculos(i) ~= 'N'
+        Rx = 0; Ry = 0;
+        if idxRx(i) > 0, Rx = x(idxRx(i)); end
+        if idxRy(i) > 0, Ry = x(idxRy(i)); end
+        fprintf('%.1f; %.1f;\n', Rx, Ry);
+    end
+end
+
+% Forças nas barras (apenas os valores)
+for bi=1:nb
+    F = x(bi);
+    fprintf('%.1f', F);
+    if bi < nb
+        fprintf('; ');
+    else
+        fprintf('\n');
+    end
+end
+
+% Forças totais nos nós (soma das forças das barras + reações)
+for i=1:n
+    Fx_total = forcas(i,1);
+    Fy_total = forcas(i,2);
+    
+    % Somar contribuições das barras
+    for bi=1:nb
+        if barras(bi,1) == i
+            cx = barras(bi,4); cy = barras(bi,5);
+            Fx_total = Fx_total + x(bi) * cx;
+            Fy_total = Fy_total + x(bi) * cy;
+        elseif barras(bi,2) == i
+            cx = barras(bi,4); cy = barras(bi,5);
+            Fx_total = Fx_total - x(bi) * cx;
+            Fy_total = Fy_total - x(bi) * cy;
+        end
+    end
+    
+    % Somar reações
+    if idxRx(i) > 0, Fx_total = Fx_total + x(idxRx(i)); end
+    if idxRy(i) > 0, Fy_total = Fy_total + x(idxRy(i)); end
+    
+    fprintf('%.1f; %.1f', Fx_total, Fy_total);
+    if i < n
+        fprintf('; ');
+    else
+        fprintf('\n');
+    end
+end
+
+% Vínculos (apenas para verificação)
+for i=1:n
+    fprintf('%c\n', vinculos(i));
+end
+
+desenharTrelica(nos, adj, rotulos_nos, barras, x, vinculos, forcas);
